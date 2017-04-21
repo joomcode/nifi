@@ -28,12 +28,8 @@ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
-import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
-import org.apache.hadoop.hive.serde2.typeinfo.UnionTypeInfo;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
+import org.apache.hadoop.hive.serde2.typeinfo.*;
 import org.apache.hadoop.io.BooleanWritable;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.DoubleWritable;
@@ -43,6 +39,9 @@ import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.MapWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
+import org.apache.nifi.util.orc.TypeDescriptionUtils;
+import org.apache.orc.TypeDescription;
+import org.apache.tools.ant.types.Description;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -407,6 +406,128 @@ public class NiFiOrcUtils {
         throw new IllegalArgumentException("Error converting Avro type " + avroType.getName() + " to Hive type");
     }
 
+    public static TypeDescription toTypeDescription(TypeInfo info){
+        switch (info.getCategory()) {
+            case PRIMITIVE:
+                switch (((PrimitiveTypeInfo) info).getPrimitiveCategory()) {
+                    case FLOAT:
+                        return TypeDescription.createFloat();
+                    case DOUBLE:
+                        return TypeDescription.createDouble();
+                    case BOOLEAN:
+                        return TypeDescription.createBoolean();
+                    case BYTE:
+                        return TypeDescription.createByte();
+                    case SHORT:
+                        return TypeDescription.createShort();
+                    case INT:
+                        return TypeDescription.createInt();
+                    case LONG:
+                        return TypeDescription.createLong();
+                    case BINARY:
+                        return TypeDescription.createBinary();
+                    case STRING:
+                        return TypeDescription.createString();
+                    case CHAR:
+                        return TypeDescription.createChar();
+                    case VARCHAR:
+                        return TypeDescription.createVarchar();
+                    case TIMESTAMP:
+                        return TypeDescription.createTimestamp();
+                    case DATE:
+                        return TypeDescription.createDate();
+                    case DECIMAL:
+                        return TypeDescription.createDecimal();
+                    default:
+                        throw new IllegalArgumentException("Unknown primitive type " +
+                                ((PrimitiveTypeInfo) info).getPrimitiveCategory());
+                }
+            case STRUCT: {
+                StructTypeInfo structTypeInfo = (StructTypeInfo)info;
+
+                ArrayList<String> fieldNames = structTypeInfo.getAllStructFieldNames();
+                ArrayList<TypeInfo> fieldTypeInfos = structTypeInfo.getAllStructFieldTypeInfos();
+
+                TypeDescription structTypeDescription = TypeDescription.createStruct();
+                for(int c = 0; c < structTypeInfo.getAllStructFieldNames().size(); c++){
+                    String fieldName = fieldNames.get(c);
+                    TypeInfo fieldTypeInfo = fieldTypeInfos.get(c);
+                    structTypeDescription.addField(fieldName, toTypeDescription(fieldTypeInfo));
+                }
+                return structTypeDescription;
+            }
+            case UNION: {
+                UnionTypeInfo unionTypeInfo = (UnionTypeInfo)info;
+
+                TypeDescription unionTypeDescription = TypeDescription.createUnion();
+
+                for(TypeInfo unionObjectTypeInfo : unionTypeInfo.getAllUnionObjectTypeInfos()){
+                    unionTypeDescription.addUnionChild(toTypeDescription(unionObjectTypeInfo));
+                }
+
+                return unionTypeDescription;
+            }
+            case MAP: {
+                MapTypeInfo mapTypeInfo = (MapTypeInfo) info;
+                return TypeDescription.createMap(
+                        toTypeDescription(mapTypeInfo.getMapKeyTypeInfo()),
+                    toTypeDescription(mapTypeInfo.getMapValueTypeInfo())
+                );
+            }
+            case LIST: {
+                ListTypeInfo listTypeInfo = (ListTypeInfo)info;
+                return TypeDescription.createList(toTypeDescription(listTypeInfo.getListElementTypeInfo()));
+            }
+            default:
+                throw new IllegalArgumentException("Unknown type " +
+                        info.getCategory());
+        }
+    }
+
+    public static TypeInfo toTypeInfo(TypeDescription typeDescription) {
+        switch (typeDescription.getCategory()) {
+            case BYTE:
+                return TypeInfoFactory.byteTypeInfo;
+            case SHORT:
+                return TypeInfoFactory.shortTypeInfo;
+            case INT:
+                return TypeInfoFactory.intTypeInfo;
+            case LONG:
+                return TypeInfoFactory.longTypeInfo;
+            case FLOAT:
+                return TypeInfoFactory.floatTypeInfo;
+            case DOUBLE:
+                return TypeInfoFactory.doubleTypeInfo;
+            case CHAR:
+                return TypeInfoFactory.charTypeInfo;
+            case VARCHAR:
+                return TypeInfoFactory.varcharTypeInfo;
+            case STRING:
+                return TypeInfoFactory.stringTypeInfo;
+            case DECIMAL:
+                return TypeInfoFactory.decimalTypeInfo;
+            case TIMESTAMP:
+                return TypeInfoFactory.timestampTypeInfo;
+            case BINARY:
+                return TypeInfoFactory.binaryTypeInfo;
+            case BOOLEAN:
+                return TypeInfoFactory.booleanTypeInfo;
+            case STRUCT: {
+                List<String> fieldNames = typeDescription.getFieldNames();
+                List<TypeInfo> fieldTypes = typeDescription.getChildren().stream()
+                        .map(NiFiOrcUtils::toTypeInfo)
+                        .collect(Collectors.toList());
+                return TypeInfoFactory.getStructTypeInfo(fieldNames, fieldTypes);
+            }
+            case LIST: {
+                TypeDescription elementTypeDescription = typeDescription.getChildren().iterator().next();
+                TypeInfo elementTypeInfo = toTypeInfo(elementTypeDescription);
+                return TypeInfoFactory.getListTypeInfo(elementTypeInfo);
+            }
+            default:
+                throw new IllegalArgumentException("Unhandled type " + typeDescription.getCategory());
+        }
+    }
 
     public static OrcFlowFileWriter createWriter(OutputStream flowFileOutputStream,
                                                  Path path,
