@@ -217,7 +217,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
                     VectorizedRowBatch batch = orcSchema.createRowBatch();
 
                     RecordReader reader = new JsonReader(in, orcSchema);
-                    try (Writer writer = OrcFile.createWriter(
+                    Writer writer = OrcFile.createWriter(
                             new Path(fileName),
                             OrcFile.writerOptions(orcConfig)
                                     .setSchema(orcSchema)
@@ -227,7 +227,8 @@ public class ConvertJSONToORC extends AbstractProcessor {
                                     .bloomFilterColumns(bloomFilterColumns)
                                     .bloomFilterFpp(bloomFilterFpp)
                                     .fileSystem(new FlowfileFileSystem(out))
-                    )){
+                    );
+                    try {
                         int recordCount = 0;
                         while (reader.nextBatch(batch)) {
                             writer.addRowBatch(batch);
@@ -235,6 +236,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
                         }
                         totalRecordCount.set(recordCount);
                     } finally {
+                        writer.close();
                         reader.close();
                     }
                 }

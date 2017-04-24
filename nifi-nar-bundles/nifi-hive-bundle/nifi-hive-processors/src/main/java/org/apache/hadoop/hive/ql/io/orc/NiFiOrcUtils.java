@@ -512,6 +512,11 @@ public class NiFiOrcUtils {
                 return TypeInfoFactory.binaryTypeInfo;
             case BOOLEAN:
                 return TypeInfoFactory.booleanTypeInfo;
+            case MAP: {
+                TypeInfo keyTypeInfo = toTypeInfo(typeDescription.getChildren().get(0));
+                TypeInfo valueTypeInfo = toTypeInfo(typeDescription.getChildren().get(0));
+                return TypeInfoFactory.getMapTypeInfo(keyTypeInfo, valueTypeInfo);
+            }
             case STRUCT: {
                 List<String> fieldNames = typeDescription.getFieldNames();
                 List<TypeInfo> fieldTypes = typeDescription.getChildren().stream()

@@ -5,15 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonStreamParser;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
-import org.apache.hadoop.hive.ql.exec.vector.BytesColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.ColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.DecimalColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.DoubleColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.ListColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.StructColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.TimestampColumnVector;
-import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
+import org.apache.hadoop.hive.ql.exec.vector.*;
 import org.apache.hadoop.hive.ql.exec.vector.expressions.VectorExpressionWriterFactory;
 import org.apache.orc.RecordReader;
 import org.apache.orc.TypeDescription;
@@ -24,6 +16,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Created by sterligovak on 21.04.17.
@@ -130,8 +123,8 @@ public class JsonReader implements RecordReader {
     }
 
     static class StructColumnConverter implements JsonConverter {
-        private JsonConverter[] childrenConverters;
-        private List<String> fieldNames;
+        private final JsonConverter[] childrenConverters;
+        private final List<String> fieldNames;
 
         public StructColumnConverter(TypeDescription schema) {
             List<TypeDescription> kids = schema.getChildren();
@@ -158,7 +151,7 @@ public class JsonReader implements RecordReader {
     }
 
     static class ListColumnConverter implements JsonConverter {
-        private JsonConverter childrenConverter;
+        private final JsonConverter childrenConverter;
 
         public ListColumnConverter(TypeDescription schema) {
             childrenConverter = createConverter(schema.getChildren().get(0));
@@ -177,6 +170,45 @@ public class JsonReader implements RecordReader {
                 for (int c = 0; c < obj.size(); ++c) {
                     childrenConverter.convert(obj.get(c), vector.child,
                             (int) vector.offsets[row] + c);
+                }
+            }
+        }
+    }
+
+    static class MapColumnConverter implements JsonConverter {
+        private final JsonConverter valueConverter;
+
+        public MapColumnConverter(TypeDescription schema) {
+            //keyConverter = createConverter(schema.getChildren().get(0));
+            valueConverter = createConverter(schema.getChildren().get(1));
+        }
+
+        @Override
+        public void convert(JsonElement value, ColumnVector vect, int row) {
+            if (value == null || value.isJsonNull()) {
+                vect.noNulls = false;
+                vect.isNull[row] = true;
+            } else {
+                MapColumnVector vector = (MapColumnVector) vect;
+                JsonObject obj = value.getAsJsonObject();
+
+                vector.lengths[row] = obj.size();
+                vector.offsets[row] = vector.childCount;
+                vector.childCount += vector.lengths[row];
+
+                BytesColumnVector keys = (BytesColumnVector) vector.keys;
+
+                int c  = 0;
+                for(Map.Entry<String, JsonElement> entry : obj.entrySet()){
+                    int nestedRow = (int)vector.offsets[row] + c;
+
+                    String k = entry.getKey();
+                    byte[] bytes = k.getBytes(StandardCharsets.UTF_8);
+                    keys.setRef(nestedRow, bytes, 0, bytes.length);
+
+                    JsonElement v = entry.getValue();
+                    valueConverter.convert(v, vector.values, nestedRow);
+                    c++;
                 }
             }
         }
@@ -208,6 +240,8 @@ public class JsonReader implements RecordReader {
                 return new StructColumnConverter(schema);
             case LIST:
                 return new ListColumnConverter(schema);
+            case MAP:
+                return new MapColumnConverter(schema);
             default:
                 throw new IllegalArgumentException("Unhandled type " + schema);
         }
