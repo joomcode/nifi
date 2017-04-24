@@ -63,7 +63,7 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"id\": \"hello\"}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertAvroToORC.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -248,7 +248,7 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"id\": \"1\"}\n{\"id\": \"2\"}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertAvroToORC.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("2", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -357,13 +357,19 @@ public class TestConvertJSONToORC {
         runner.assertValid();
 
         Map<String, String> attributes = ImmutableMap.of(CoreAttributes.FILENAME.key(), "test.json");
-        runner.enqueue(streamFor("{\"map\": {\"id\": \"hello\", \"val\": \"world\"}}"), attributes);
+
+        StringBuilder builder = new StringBuilder();
+        for(int i = 0; i < 1000; i++){
+            builder.append(String.format("{\"map\": {\"id\": \"hello%s\", \"val\": \"world%s\"}}\n", i, i));
+        }
+
+        runner.enqueue(streamFor(builder.toString()), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertAvroToORC.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
-        assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
+        assertEquals("1000", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
         assertEquals("test.orc", resultFlowFile.getAttribute(CoreAttributes.FILENAME.key()));
         byte[] resultContents = runner.getContentAsByteArray(resultFlowFile);
         FileOutputStream fos = new FileOutputStream("target/test1.orc");
@@ -381,17 +387,44 @@ public class TestConvertJSONToORC {
                         .filesystem(fs)
         );
         RecordReader rows = reader.rows();
-        Object o = rows.next(null);
-        assertNotNull(o);
-        assertTrue(o instanceof OrcStruct);
-        StructObjectInspector inspector = (StructObjectInspector) OrcStruct.createObjectInspector(schema);
 
-        // Check some fields in the first row
-        Object mapFieldObject = inspector.getStructFieldData(o, inspector.getStructFieldRef("map"));
-        assertTrue(mapFieldObject instanceof Map);
+        for(int i = 0; i < 1000; i++) {
+            Object o = rows.next(null);
+            assertNotNull(o);
+            assertTrue(o instanceof OrcStruct);
+            StructObjectInspector inspector = (StructObjectInspector) OrcStruct.createObjectInspector(schema);
 
-        assertEquals(new Text("hello"), ((Map)mapFieldObject).get(new Text("id")));
-        assertEquals(new Text("world"), ((Map)mapFieldObject).get(new Text("val")));
+            // Check some fields in the first row
+            Object mapFieldObject = inspector.getStructFieldData(o, inspector.getStructFieldRef("map"));
+            assertTrue(mapFieldObject instanceof Map);
+
+            assertEquals(new Text("hello" + i), ((Map) mapFieldObject).get(new Text("id")));
+            assertEquals(new Text("world" + i), ((Map) mapFieldObject).get(new Text("val")));
+        }
+    }
+
+    @Test
+    public void test_list_large() throws IOException {
+        final String stringSchema = "struct<list:array<string>>";
+        runner.assertNotValid();
+        runner.setValidateExpressionUsage(false);
+        runner.setProperty(ConvertJSONToORC.ORC_SCHEMA, stringSchema);
+        runner.assertValid();
+
+        Map<String, String> attributes = ImmutableMap.of(CoreAttributes.FILENAME.key(), "test.json");
+
+        StringBuilder builder = new StringBuilder();
+        for(int i = 0; i < 2000; i++){
+            builder.append("{\"list\": [\"val1\", \"val2\"]}\n");
+        }
+
+        runner.enqueue(streamFor(builder.toString()), attributes);
+        runner.run();
+
+        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+
+        MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
+        assertEquals("2000", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
     }
 
     @Test
@@ -406,7 +439,7 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"map\": {\"id\": {\"value\": \"hello\"}, \"val\": {\"value\": \"world\"}}}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertAvroToORC.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));

@@ -25,6 +25,8 @@ public class JsonReader implements RecordReader {
     private final TypeDescription schema;
     private final JsonStreamParser parser;
     private final JsonConverter[] converters;
+
+    private JsonObject currentElement = null;
     private long rowNumber = 0;
 
     interface JsonConverter {
@@ -126,7 +128,7 @@ public class JsonReader implements RecordReader {
         private final JsonConverter[] childrenConverters;
         private final List<String> fieldNames;
 
-        public StructColumnConverter(TypeDescription schema) {
+        StructColumnConverter(TypeDescription schema) {
             List<TypeDescription> kids = schema.getChildren();
             childrenConverters = new JsonConverter[kids.size()];
             for (int c = 0; c < childrenConverters.length; ++c) {
@@ -153,7 +155,7 @@ public class JsonReader implements RecordReader {
     static class ListColumnConverter implements JsonConverter {
         private final JsonConverter childrenConverter;
 
-        public ListColumnConverter(TypeDescription schema) {
+        ListColumnConverter(TypeDescription schema) {
             childrenConverter = createConverter(schema.getChildren().get(0));
         }
 
@@ -168,8 +170,8 @@ public class JsonReader implements RecordReader {
                 vector.offsets[row] = vector.childCount;
                 vector.childCount += vector.lengths[row];
                 for (int c = 0; c < obj.size(); ++c) {
-                    childrenConverter.convert(obj.get(c), vector.child,
-                            (int) vector.offsets[row] + c);
+                    int nestedRowId = (int) vector.offsets[row] + c;
+                    childrenConverter.convert(obj.get(c), vector.child, nestedRowId);
                 }
             }
         }
@@ -179,7 +181,6 @@ public class JsonReader implements RecordReader {
         private final JsonConverter valueConverter;
 
         public MapColumnConverter(TypeDescription schema) {
-            //keyConverter = createConverter(schema.getChildren().get(0));
             valueConverter = createConverter(schema.getChildren().get(1));
         }
 
@@ -262,27 +263,45 @@ public class JsonReader implements RecordReader {
         }
     }
 
+    @Override
     public boolean nextBatch(VectorizedRowBatch batch) throws IOException {
         batch.reset();
         int maxSize = batch.getMaxSize();
         List<String> fieldNames = schema.getFieldNames();
-        while (parser.hasNext() && batch.size < maxSize) {
-            JsonObject elem = parser.next().getAsJsonObject();
-            for (int c = 0; c < converters.length; ++c) {
-                // look up each field to see if it is in the input, otherwise
-                // set it to null.
-                JsonElement field = elem.get(fieldNames.get(c));
-                if (field == null) {
-                    batch.cols[c].noNulls = false;
-                    batch.cols[c].isNull[batch.size] = true;
-                } else {
-                    converters[c].convert(field, batch.cols[c], batch.size);
-                }
-            }
+
+        if (currentElement != null){
+            writeJsonObject(batch, fieldNames, currentElement);
+            currentElement = null;
             batch.size++;
         }
+
+        try {
+            while (parser.hasNext() && batch.size < maxSize) {
+                currentElement = parser.next().getAsJsonObject();
+                writeJsonObject(batch, fieldNames, currentElement);
+                currentElement = null;
+                batch.size++;
+            }
+        } catch (ArrayIndexOutOfBoundsException e){
+            // json object was too large, we will process it on next call
+        }
+
         rowNumber += batch.size;
         return batch.size != 0;
+    }
+
+    private void writeJsonObject(VectorizedRowBatch batch, List<String> fieldNames, JsonObject elem) {
+        for (int c = 0; c < converters.length; ++c) {
+            // look up each field to see if it is in the input, otherwise
+            // set it to null.
+            JsonElement field = elem.get(fieldNames.get(c));
+            if (field == null) {
+                batch.cols[c].noNulls = false;
+                batch.cols[c].isNull[batch.size] = true;
+            } else {
+                converters[c].convert(field, batch.cols[c], batch.size);
+            }
+        }
     }
 
     @Override
