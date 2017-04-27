@@ -6,8 +6,6 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.io.orc.*;
 import org.apache.hadoop.hive.ql.io.orc.Reader;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
-import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
@@ -17,7 +15,6 @@ import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
-import org.apache.nifi.util.orc.TypeDescriptionUtils;
 import org.apache.orc.TypeDescription;
 import org.junit.Before;
 import org.junit.Test;
@@ -63,7 +60,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"id\": \"hello\"}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -93,6 +92,34 @@ public class TestConvertJSONToORC {
         Object stringFieldObject = inspector.getStructFieldData(o, inspector.getStructFieldRef("id"));
         assertTrue(stringFieldObject instanceof Text);
         assertEquals("hello", stringFieldObject.toString());
+    }
+
+    @Test
+    public void test_primitiveTypes() throws CharacterCodingException {
+        runner.assertNotValid();
+        runner.setValidateExpressionUsage(false);
+        runner.setProperty(ConvertJSONToORC.ORC_SCHEMA, "struct<" +
+                "ti:tinyint," +
+                "si:smallint," +
+                "i:int," +
+                "l:bigint," +
+                "f:float," +
+                "d:double," +
+                "s:string," +
+                "ch:char(1)," +
+                "vch:varchar(50)," +
+                "b:binary," +
+                "ts:timestamp" +
+                ">");
+        runner.assertValid();
+
+        Map<String, String> attributes = ImmutableMap.of(CoreAttributes.FILENAME.key(), "test.json");
+        runner.enqueue(streamFor("{\"ti\":0,\"si\":1,\"i\":2,\"l\":3,\"f\":4.0,\"d\":5.0,\"s\":\"string\",\"ch\":\"c\",\"vch\":\"varchar\",\"b\":\"01010101\",\"ts\":\"2017-04-27 10:00:00\"}"), attributes);
+        runner.run();
+
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
     }
 
     @Test
@@ -234,7 +261,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor(data), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
     }
 
     @Test
@@ -248,7 +277,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"id\": \"1\"}\n{\"id\": \"2\"}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("2", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -304,7 +335,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"entry\": {\"id\": 10, \"val\": \"world\"}, \"str\": \"value\"}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertAvroToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -366,7 +399,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor(builder.toString()), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1000", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -421,7 +456,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor(builder.toString()), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("2000", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));
@@ -439,7 +476,9 @@ public class TestConvertJSONToORC {
         runner.enqueue(streamFor("{\"map\": {\"id\": {\"value\": \"hello\"}, \"val\": {\"value\": \"world\"}}}"), attributes);
         runner.run();
 
-        runner.assertAllFlowFilesTransferred(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
         assertEquals("1", resultFlowFile.getAttribute(ConvertAvroToORC.RECORD_COUNT_ATTRIBUTE));

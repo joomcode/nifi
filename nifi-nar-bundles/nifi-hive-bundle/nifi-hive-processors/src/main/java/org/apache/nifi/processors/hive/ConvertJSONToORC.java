@@ -2,13 +2,12 @@ package org.apache.nifi.processors.hive;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
-import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
-import org.apache.hadoop.util.Progressable;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.components.Validator;
 import org.apache.nifi.util.orc.FlowfileFileSystem;
+import org.apache.nifi.util.orc.JSONToOrcConverter;
 import org.apache.nifi.util.orc.JsonReader;
 import org.apache.orc.*;
 import org.apache.nifi.annotation.behavior.*;
@@ -25,15 +24,14 @@ import org.apache.nifi.util.hive.HiveUtils;
 import org.apache.orc.Writer;
 
 import java.io.*;
-import java.net.URI;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Created by sterligovak on 21.04.17.
  */
 @SideEffectFree
-@SupportsBatching
 @Tags({"orc", "hive", "convert", "json"})
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @WritesAttributes({
@@ -53,7 +51,16 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .description("A file or comma separated list of files which contains the ORC configuration (hive-site.xml, e.g.). Without this, Hadoop "
                     + "will search the classpath for a 'hive-site.xml' file or will revert to a default configuration. Please see the ORC documentation for more details.")
             .required(false)
+            .expressionLanguageSupported(false)
             .addValidator(HiveUtils.createMultipleFilesExistValidator())
+            .build();
+
+    public static final PropertyDescriptor MAX_ENTRIES = new PropertyDescriptor.Builder()
+            .name("Maximum Number of Entries")
+            .description("The maximum number of files to include in a ORC file.")
+            .required(true)
+            .defaultValue("1000")
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
             .build();
 
     public static final PropertyDescriptor STRIPE_SIZE = new PropertyDescriptor.Builder()
@@ -61,6 +68,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .displayName("Stripe Size")
             .description("The size of the memory buffer (in bytes) for writing stripes to an ORC file")
             .required(true)
+            .expressionLanguageSupported(false)
             .addValidator(StandardValidators.DATA_SIZE_VALIDATOR)
             .defaultValue("64 MB")
             .build();
@@ -71,6 +79,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .description("The maximum size of the memory buffers (in bytes) used for compressing and storing a stripe in memory. This is a hint to the ORC writer, "
                     + "which may choose to use a smaller buffer size based on stripe size and number of columns for efficient stripe writing and memory utilization.")
             .required(true)
+            .expressionLanguageSupported(false)
             .addValidator(StandardValidators.DATA_SIZE_VALIDATOR)
             .defaultValue("10 KB")
             .build();
@@ -79,6 +88,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .name("orc-compression-type")
             .displayName("Compression Type")
             .required(true)
+            .expressionLanguageSupported(false)
             .allowableValues("NONE", "ZLIB", "SNAPPY", "LZO")
             .defaultValue("NONE")
             .build();
@@ -97,6 +107,7 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .displayName("ORC Bloom filter columns")
             .description("Comma separated columns to compute Bloom filters")
             .required(false)
+            .expressionLanguageSupported(false)
             .defaultValue(null)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .build();
@@ -106,8 +117,9 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .displayName("ORC Bloom filter false positive percent")
             .description("Comma separated columns to compute Bloom filters")
             .required(true)
+            .expressionLanguageSupported(false)
             .defaultValue("0.05")
-            .addValidator(new Validator(){
+            .addValidator(new Validator() {
                 @Override
                 public ValidationResult validate(String subject, String value, ValidationContext context) {
                     if (context.isExpressionLanguageSupported(subject) && context.isExpressionLanguagePresent(value)) {
@@ -131,20 +143,35 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .build();
 
     // Relationships
-    static final Relationship REL_SUCCESS = new Relationship.Builder()
+    public static final Relationship REL_SUCCESS = new Relationship.Builder()
             .name("success")
-            .description("A FlowFile is routed to this relationship after it has been converted to ORC format.")
+            .description("The FlowFile containing ORC file")
+            .build();
+
+    public static final Relationship REL_ORIGINAL = new Relationship.Builder()
+            .name("original")
+            .description("The FlowFiles that were used to create the bundle")
             .build();
 
     static final Relationship REL_FAILURE = new Relationship.Builder()
             .name("failure")
-            .description("A FlowFile is routed to this relationship if it cannot be parsed as Avro or cannot be converted to ORC for any reason")
+            .description("A FlowFile is routed to this relationship if it cannot be parsed as JSON or cannot be converted to ORC for any reason")
             .build();
 
     private final static List<PropertyDescriptor> propertyDescriptors;
     private final static Set<Relationship> relationships;
 
-    private volatile Configuration orcConfig;
+    private static class Settings {
+        Configuration orcConfig = new Configuration();
+        int maxEntries;
+        long stripeSize;
+        int bufferSize;
+        String bloomFilterColumns;
+        double bloomFilterFpp;
+        CompressionKind compressionType;
+        TypeDescription orcSchema;
+        JSONToOrcConverter converter;
+    }
 
     static {
         List<PropertyDescriptor> _propertyDescriptors = new ArrayList<>();
@@ -155,13 +182,17 @@ public class ConvertJSONToORC extends AbstractProcessor {
         _propertyDescriptors.add(ORC_SCHEMA);
         _propertyDescriptors.add(ORC_BLOOM_FILTER_COLUMNS);
         _propertyDescriptors.add(ORC_BLOOM_FILTER_FPP);
+        _propertyDescriptors.add(MAX_ENTRIES);
         propertyDescriptors = Collections.unmodifiableList(_propertyDescriptors);
 
         Set<Relationship> _relationships = new HashSet<>();
         _relationships.add(REL_SUCCESS);
         _relationships.add(REL_FAILURE);
+        _relationships.add(REL_ORIGINAL);
         relationships = Collections.unmodifiableSet(_relationships);
     }
+
+    private final AtomicReference<Settings> settingsRef = new AtomicReference<>();
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -175,91 +206,100 @@ public class ConvertJSONToORC extends AbstractProcessor {
 
     @OnScheduled
     public void setup(ProcessContext context) {
+        Settings newSettings = new Settings();
+
         boolean confFileProvided = context.getProperty(ORC_CONFIGURATION_RESOURCES).isSet();
         if (confFileProvided) {
             final String configFiles = context.getProperty(ORC_CONFIGURATION_RESOURCES).getValue();
-            orcConfig = HiveJdbcCommon.getConfigurationFromFiles(configFiles);
+            newSettings.orcConfig = HiveJdbcCommon.getConfigurationFromFiles(configFiles);
         }
+
+        newSettings.maxEntries = context.getProperty(MAX_ENTRIES).asInteger();
+        newSettings.stripeSize = context.getProperty(STRIPE_SIZE).asDataSize(DataUnit.B).longValue();
+        newSettings.bufferSize = context.getProperty(BUFFER_SIZE).asDataSize(DataUnit.B).intValue();
+        newSettings.bloomFilterColumns = context.getProperty(ORC_BLOOM_FILTER_COLUMNS).getValue();
+        newSettings.bloomFilterFpp = context.getProperty(ORC_BLOOM_FILTER_FPP).asDouble();
+        newSettings.compressionType = CompressionKind.valueOf(context.getProperty(COMPRESSION_TYPE).getValue());
+
+        String schema = context.getProperty(ORC_SCHEMA)
+                .getValue()
+                .replaceAll("\\s+", "");
+        newSettings.orcSchema = TypeDescription.fromString(schema);
+        newSettings.converter = new JSONToOrcConverter(newSettings.orcSchema);
+        settingsRef.set(newSettings);
     }
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
-        FlowFile flowFile = session.get();
-        if (flowFile == null) {
+        Settings settings = settingsRef.get();
+        List<FlowFile> flowFiles = session.get(settings.maxEntries);
+
+        if (flowFiles.isEmpty()) {
             return;
         }
 
-        String schema = context.getProperty(ORC_SCHEMA)
-                .evaluateAttributeExpressions(flowFile)
-                .getValue()
-                .replaceAll("\\s+", "");
+        FlowFile orcFlowFile = session.create(flowFiles);
+        final String orcFileName = orcFlowFile.getAttribute(CoreAttributes.FILENAME.key());
 
-        try {
-            long startTime = System.currentTimeMillis();
-            final long stripeSize = context.getProperty(STRIPE_SIZE).asDataSize(DataUnit.B).longValue();
-            final int bufferSize = context.getProperty(BUFFER_SIZE).asDataSize(DataUnit.B).intValue();
-            final String bloomFilterColumns = context.getProperty(ORC_BLOOM_FILTER_COLUMNS).getValue();
-            final double bloomFilterFpp = context.getProperty(ORC_BLOOM_FILTER_FPP).asDouble();
-            final CompressionKind compressionType = CompressionKind.valueOf(context.getProperty(COMPRESSION_TYPE).getValue());
+        long startTime = System.currentTimeMillis();
+        final AtomicInteger totalRecordCount = new AtomicInteger(0);
 
-            final AtomicInteger totalRecordCount = new AtomicInteger(0);
-            final String fileName = flowFile.getAttribute(CoreAttributes.FILENAME.key());
+        orcFlowFile = session.write(orcFlowFile, out -> {
+            Writer writer = OrcFile.createWriter(
+                    new Path(orcFileName),
+                    OrcFile.writerOptions(settings.orcConfig)
+                            .setSchema(settings.orcSchema)
+                            .stripeSize(settings.stripeSize)
+                            .bufferSize(settings.bufferSize)
+                            .compress(settings.compressionType)
+                            .bloomFilterColumns(settings.bloomFilterColumns)
+                            .bloomFilterFpp(settings.bloomFilterFpp)
+                            .fileSystem(new FlowfileFileSystem(out))
+            );
 
-            flowFile = session.write(flowFile, (rawIn, rawOut) -> {
-                try (final InputStream in = new BufferedInputStream(rawIn);
-                     final OutputStream out = new BufferedOutputStream(rawOut);) {
-
-                    if (orcConfig == null) {
-                        orcConfig = new Configuration();
-                    }
-
-                    TypeDescription orcSchema = TypeDescription.fromString(schema);
-                    VectorizedRowBatch batch = orcSchema.createRowBatch();
-
-                    RecordReader reader = new JsonReader(in, orcSchema);
-                    Writer writer = OrcFile.createWriter(
-                            new Path(fileName),
-                            OrcFile.writerOptions(orcConfig)
-                                    .setSchema(orcSchema)
-                                    .stripeSize(stripeSize)
-                                    .bufferSize(bufferSize)
-                                    .compress(compressionType)
-                                    .bloomFilterColumns(bloomFilterColumns)
-                                    .bloomFilterFpp(bloomFilterFpp)
-                                    .fileSystem(new FlowfileFileSystem(out))
-                    );
+            VectorizedRowBatch batch = settings.orcSchema.createRowBatch();
+            try {
+                for (FlowFile flowFile : flowFiles) {
                     try {
-                        int recordCount = 0;
-                        while (reader.nextBatch(batch)) {
-                            writer.addRowBatch(batch);
-                            recordCount += batch.size;
-                        }
-                        totalRecordCount.set(recordCount);
+                        session.read(flowFile, in -> {
+                            RecordReader reader = new JsonReader(in, settings.converter);
+                            try {
+                                int recordCount = 0;
+                                while (reader.nextBatch(batch)) {
+                                    writer.addRowBatch(batch);
+                                    recordCount += batch.size;
+                                }
+                                totalRecordCount.addAndGet(recordCount);
+                            } finally {
+                                reader.close();
+                            }
+                        });
+                    } catch (Exception e) {
+                        getLogger().error("Failed to convert {} from JSON to ORC due to {}; transferring to failure", new Object[]{flowFile, e});
+                        session.transfer(flowFile, REL_FAILURE);
                     } finally {
-                        writer.close();
-                        reader.close();
+                        session.transfer(flowFile, REL_ORIGINAL);
                     }
                 }
-            });
-
-            // Add attributes and transfer to success
-            flowFile = session.putAttribute(flowFile, RECORD_COUNT_ATTRIBUTE, Integer.toString(totalRecordCount.get()));
-            StringBuilder newFilename = new StringBuilder();
-            int extensionIndex = fileName.lastIndexOf(".");
-            if (extensionIndex != -1) {
-                newFilename.append(fileName.substring(0, extensionIndex));
-            } else {
-                newFilename.append(fileName);
+            } finally {
+                writer.close();
             }
-            newFilename.append(".orc");
-            flowFile = session.putAttribute(flowFile, CoreAttributes.MIME_TYPE.key(), ORC_MIME_TYPE);
-            flowFile = session.putAttribute(flowFile, CoreAttributes.FILENAME.key(), newFilename.toString());
-            session.transfer(flowFile, REL_SUCCESS);
-            session.getProvenanceReporter().modifyContent(flowFile, "Converted " + totalRecordCount.get() + " records", System.currentTimeMillis() - startTime);
+        });
 
-        } catch (final ProcessException pe) {
-            getLogger().error("Failed to convert {} from Avro to ORC due to {}; transferring to failure", new Object[]{flowFile, pe});
-            session.transfer(flowFile, REL_FAILURE);
+        orcFlowFile = session.putAttribute(orcFlowFile, RECORD_COUNT_ATTRIBUTE, Integer.toString(totalRecordCount.get()));
+        StringBuilder newFilename = new StringBuilder();
+        int extensionIndex = orcFileName.lastIndexOf(".");
+        if (extensionIndex != -1) {
+            newFilename.append(orcFileName.substring(0, extensionIndex));
+        } else {
+            newFilename.append(orcFileName);
         }
+        newFilename.append(".orc");
+        orcFlowFile = session.putAttribute(orcFlowFile, CoreAttributes.MIME_TYPE.key(), ORC_MIME_TYPE);
+        orcFlowFile = session.putAttribute(orcFlowFile, CoreAttributes.FILENAME.key(), newFilename.toString());
+
+        session.transfer(orcFlowFile, REL_SUCCESS);
+        session.getProvenanceReporter().modifyContent(orcFlowFile, "Converted " + totalRecordCount.get() + " records", System.currentTimeMillis() - startTime);
+        session.getProvenanceReporter().join(flowFiles, orcFlowFile);
     }
 }
