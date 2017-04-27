@@ -32,12 +32,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
-import org.apache.nifi.annotation.behavior.DynamicProperty;
-import org.apache.nifi.annotation.behavior.EventDriven;
-import org.apache.nifi.annotation.behavior.InputRequirement;
+import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.annotation.behavior.InputRequirement.Requirement;
-import org.apache.nifi.annotation.behavior.SideEffectFree;
-import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
@@ -119,6 +115,7 @@ import org.apache.nifi.update.attributes.serde.CriteriaSerDe;
  */
 @EventDriven
 @SideEffectFree
+@SupportsBatching
 @InputRequirement(Requirement.INPUT_REQUIRED)
 @Tags({"attributes", "modification", "update", "delete", "Attribute Expression Language"})
 @CapabilityDescription("Updates the Attributes for a FlowFile by using the Attribute Expression Language and/or deletes the attributes based on a regular expression")
@@ -335,7 +332,7 @@ public class UpdateAttribute extends AbstractProcessor implements Searchable {
         final ComponentLog logger = getLogger();
         final Criteria criteria = criteriaCache.get();
 
-        List<FlowFile> flowFiles = session.get(100);
+        List<FlowFile> flowFiles = session.get(1000);
         if (flowFiles.isEmpty()) {
             return;
         }

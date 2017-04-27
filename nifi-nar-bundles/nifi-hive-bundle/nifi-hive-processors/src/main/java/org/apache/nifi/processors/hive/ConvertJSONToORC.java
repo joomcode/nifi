@@ -23,7 +23,6 @@ import org.apache.nifi.util.hive.HiveJdbcCommon;
 import org.apache.nifi.util.hive.HiveUtils;
 import org.apache.orc.Writer;
 
-import java.io.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
