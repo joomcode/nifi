@@ -35,9 +35,11 @@ public class JsonReader implements RecordReader {
             while (batch.size < maxSize &&
                     (line = this.reader.readLine()) != null) {
                 currentElement = JSONObject.parseObject(line, Feature.OrderedField);
-                converter.writeJsonObject(currentElement, batch);
-                currentElement = null;
-                batch.size++;
+                if (currentElement != null) {
+                    converter.writeJsonObject(currentElement, batch);
+                    currentElement = null;
+                    batch.size++;
+                }
             }
         } catch (ArrayIndexOutOfBoundsException e){
             // json object was too large, we will process it on next call

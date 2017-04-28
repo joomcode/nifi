@@ -54,14 +54,6 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .addValidator(HiveUtils.createMultipleFilesExistValidator())
             .build();
 
-    public static final PropertyDescriptor MAX_ENTRIES = new PropertyDescriptor.Builder()
-            .name("Maximum Number of Entries")
-            .description("The maximum number of files to include in a ORC file.")
-            .required(true)
-            .defaultValue("1000")
-            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
-            .build();
-
     public static final PropertyDescriptor STRIPE_SIZE = new PropertyDescriptor.Builder()
             .name("orc-stripe-size")
             .displayName("Stripe Size")
@@ -147,11 +139,6 @@ public class ConvertJSONToORC extends AbstractProcessor {
             .description("The FlowFile containing ORC file")
             .build();
 
-    public static final Relationship REL_ORIGINAL = new Relationship.Builder()
-            .name("original")
-            .description("The FlowFiles that were used to create the bundle")
-            .build();
-
     static final Relationship REL_FAILURE = new Relationship.Builder()
             .name("failure")
             .description("A FlowFile is routed to this relationship if it cannot be parsed as JSON or cannot be converted to ORC for any reason")
@@ -181,13 +168,11 @@ public class ConvertJSONToORC extends AbstractProcessor {
         _propertyDescriptors.add(ORC_SCHEMA);
         _propertyDescriptors.add(ORC_BLOOM_FILTER_COLUMNS);
         _propertyDescriptors.add(ORC_BLOOM_FILTER_FPP);
-        _propertyDescriptors.add(MAX_ENTRIES);
         propertyDescriptors = Collections.unmodifiableList(_propertyDescriptors);
 
         Set<Relationship> _relationships = new HashSet<>();
         _relationships.add(REL_SUCCESS);
         _relationships.add(REL_FAILURE);
-        _relationships.add(REL_ORIGINAL);
         relationships = Collections.unmodifiableSet(_relationships);
     }
 
@@ -213,7 +198,6 @@ public class ConvertJSONToORC extends AbstractProcessor {
             newSettings.orcConfig = HiveJdbcCommon.getConfigurationFromFiles(configFiles);
         }
 
-        newSettings.maxEntries = context.getProperty(MAX_ENTRIES).asInteger();
         newSettings.stripeSize = context.getProperty(STRIPE_SIZE).asDataSize(DataUnit.B).longValue();
         newSettings.bufferSize = context.getProperty(BUFFER_SIZE).asDataSize(DataUnit.B).intValue();
         newSettings.bloomFilterColumns = context.getProperty(ORC_BLOOM_FILTER_COLUMNS).getValue();
@@ -230,75 +214,63 @@ public class ConvertJSONToORC extends AbstractProcessor {
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
-        Settings settings = settingsRef.get();
-        List<FlowFile> flowFiles = session.get(settings.maxEntries);
-
-        if (flowFiles.isEmpty()) {
+        FlowFile flowFile = session.get();
+        if (flowFile == null) {
             return;
         }
 
-        FlowFile orcFlowFile = session.create(flowFiles);
-        final String orcFileName = orcFlowFile.getAttribute(CoreAttributes.FILENAME.key());
+        Settings settings = settingsRef.get();
+        final String orcFileName = flowFile.getAttribute(CoreAttributes.FILENAME.key());
 
         long startTime = System.currentTimeMillis();
         final AtomicInteger totalRecordCount = new AtomicInteger(0);
 
-        orcFlowFile = session.write(orcFlowFile, out -> {
-            Writer writer = OrcFile.createWriter(
-                    new Path(orcFileName),
-                    OrcFile.writerOptions(settings.orcConfig)
-                            .setSchema(settings.orcSchema)
-                            .stripeSize(settings.stripeSize)
-                            .bufferSize(settings.bufferSize)
-                            .compress(settings.compressionType)
-                            .bloomFilterColumns(settings.bloomFilterColumns)
-                            .bloomFilterFpp(settings.bloomFilterFpp)
-                            .fileSystem(new FlowfileFileSystem(out))
-            );
+        try {
+            flowFile = session.write(flowFile, (in, out) -> {
+                Writer writer = OrcFile.createWriter(
+                        new Path(orcFileName),
+                        OrcFile.writerOptions(settings.orcConfig)
+                                .setSchema(settings.orcSchema)
+                                .stripeSize(settings.stripeSize)
+                                .bufferSize(settings.bufferSize)
+                                .compress(settings.compressionType)
+                                .bloomFilterColumns(settings.bloomFilterColumns)
+                                .bloomFilterFpp(settings.bloomFilterFpp)
+                                .fileSystem(new FlowfileFileSystem(out))
+                );
 
-            VectorizedRowBatch batch = settings.orcSchema.createRowBatch();
-            try {
-                for (FlowFile flowFile : flowFiles) {
-                    try {
-                        session.read(flowFile, in -> {
-                            RecordReader reader = new JsonReader(in, settings.converter);
-                            try {
-                                int recordCount = 0;
-                                while (reader.nextBatch(batch)) {
-                                    writer.addRowBatch(batch);
-                                    recordCount += batch.size;
-                                }
-                                totalRecordCount.addAndGet(recordCount);
-                            } finally {
-                                reader.close();
-                            }
-                        });
-                    } catch (Exception e) {
-                        getLogger().error("Failed to convert {} from JSON to ORC due to {}; transferring to failure", new Object[]{flowFile, e});
-                        session.transfer(flowFile, REL_FAILURE);
-                    } finally {
-                        session.transfer(flowFile, REL_ORIGINAL);
+                VectorizedRowBatch batch = settings.orcSchema.createRowBatch();
+                RecordReader reader = new JsonReader(in, settings.converter);
+                try {
+                    int recordCount = 0;
+                    while (reader.nextBatch(batch)) {
+                        writer.addRowBatch(batch);
+                        recordCount += batch.size;
                     }
+                    totalRecordCount.addAndGet(recordCount);
+                } finally {
+                    reader.close();
+                    writer.close();
                 }
-            } finally {
-                writer.close();
+            });
+
+            flowFile = session.putAttribute(flowFile, RECORD_COUNT_ATTRIBUTE, Integer.toString(totalRecordCount.get()));
+            StringBuilder newFilename = new StringBuilder();
+            int extensionIndex = orcFileName.lastIndexOf(".");
+            if (extensionIndex != -1) {
+                newFilename.append(orcFileName.substring(0, extensionIndex));
+            } else {
+                newFilename.append(orcFileName);
             }
-        });
+            newFilename.append(".orc");
+            flowFile = session.putAttribute(flowFile, CoreAttributes.MIME_TYPE.key(), ORC_MIME_TYPE);
+            flowFile = session.putAttribute(flowFile, CoreAttributes.FILENAME.key(), newFilename.toString());
 
-        orcFlowFile = session.putAttribute(orcFlowFile, RECORD_COUNT_ATTRIBUTE, Integer.toString(totalRecordCount.get()));
-        StringBuilder newFilename = new StringBuilder();
-        int extensionIndex = orcFileName.lastIndexOf(".");
-        if (extensionIndex != -1) {
-            newFilename.append(orcFileName.substring(0, extensionIndex));
-        } else {
-            newFilename.append(orcFileName);
+            session.transfer(flowFile, REL_SUCCESS);
+            session.getProvenanceReporter().modifyContent(flowFile, "Converted " + totalRecordCount.get() + " records", System.currentTimeMillis() - startTime);
+        } catch (Exception e) {
+            getLogger().error("Failed to convert {} from JSON to ORC due to {}; transferring to failure", new Object[]{flowFile, e}, e);
+            session.transfer(flowFile, REL_FAILURE);
         }
-        newFilename.append(".orc");
-        orcFlowFile = session.putAttribute(orcFlowFile, CoreAttributes.MIME_TYPE.key(), ORC_MIME_TYPE);
-        orcFlowFile = session.putAttribute(orcFlowFile, CoreAttributes.FILENAME.key(), newFilename.toString());
-
-        session.transfer(orcFlowFile, REL_SUCCESS);
-        session.getProvenanceReporter().modifyContent(orcFlowFile, "Converted " + totalRecordCount.get() + " records", System.currentTimeMillis() - startTime);
-        session.getProvenanceReporter().join(flowFiles, orcFlowFile);
     }
 }

@@ -44,6 +44,7 @@ public class TestConvertJSONToORC {
         runner = TestRunners.newTestRunner(processor);
     }
 
+
     @Test
     public void test_Setup() throws Exception {
 
@@ -61,7 +62,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
@@ -118,7 +118,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
     }
 
@@ -262,7 +261,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
     }
 
@@ -278,7 +276,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
@@ -336,7 +333,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
@@ -400,7 +396,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
@@ -457,7 +452,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
@@ -477,7 +471,6 @@ public class TestConvertJSONToORC {
         runner.run();
 
         runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
-        runner.assertTransferCount(ConvertJSONToORC.REL_ORIGINAL, 1);
         runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
 
         MockFlowFile resultFlowFile = runner.getFlowFilesForRelationship(ConvertAvroToORC.REL_SUCCESS).get(0);
