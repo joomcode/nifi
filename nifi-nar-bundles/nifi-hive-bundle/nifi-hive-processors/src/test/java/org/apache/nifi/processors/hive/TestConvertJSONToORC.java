@@ -95,6 +95,21 @@ public class TestConvertJSONToORC {
     }
 
     @Test
+    public void test_newline_at_the_end() throws IOException {
+        runner.assertNotValid();
+        runner.setValidateExpressionUsage(false);
+        runner.setProperty(ConvertJSONToORC.ORC_SCHEMA, "struct<id:string>");
+        runner.assertValid();
+
+        Map<String, String> attributes = ImmutableMap.of(CoreAttributes.FILENAME.key(), "test.json");
+        runner.enqueue(streamFor("{\"id\": \"hello\"}\n\n"), attributes);
+        runner.run();
+
+        runner.assertTransferCount(ConvertJSONToORC.REL_SUCCESS, 1);
+        runner.assertTransferCount(ConvertJSONToORC.REL_FAILURE, 0);
+    }
+
+    @Test
     public void test_primitiveTypes() throws CharacterCodingException {
         runner.assertNotValid();
         runner.setValidateExpressionUsage(false);
