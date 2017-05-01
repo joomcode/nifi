@@ -230,34 +230,31 @@ public class ConvertJSONToORC extends AbstractProcessor {
         final AtomicInteger totalRecordCount = new AtomicInteger(0);
 
         try {
-            flowFile = session.write(flowFile, (rawIn, rawOut) -> {
-                try (InputStream in = new BufferedInputStream(rawIn);
-                     OutputStream out = new BufferedOutputStream(rawOut)) {
-                    Writer writer = OrcFile.createWriter(
-                            new Path(orcFileName),
-                            OrcFile.writerOptions(settings.orcConfig)
-                                    .setSchema(settings.orcSchema)
-                                    .stripeSize(settings.stripeSize)
-                                    .bufferSize(settings.bufferSize)
-                                    .compress(settings.compressionType)
-                                    .bloomFilterColumns(settings.bloomFilterColumns)
-                                    .bloomFilterFpp(settings.bloomFilterFpp)
-                                    .fileSystem(new FlowfileFileSystem(out))
-                    );
+            flowFile = session.write(flowFile, (in, out) -> {
+                Writer writer = OrcFile.createWriter(
+                        new Path(orcFileName),
+                        OrcFile.writerOptions(settings.orcConfig)
+                                .setSchema(settings.orcSchema)
+                                .stripeSize(settings.stripeSize)
+                                .bufferSize(settings.bufferSize)
+                                .compress(settings.compressionType)
+                                .bloomFilterColumns(settings.bloomFilterColumns)
+                                .bloomFilterFpp(settings.bloomFilterFpp)
+                                .fileSystem(new FlowfileFileSystem(out))
+                );
 
-                    VectorizedRowBatch batch = settings.orcSchema.createRowBatch();
-                    RecordReader reader = new JsonReader(in, settings.converter);
-                    try {
-                        int recordCount = 0;
-                        while (reader.nextBatch(batch)) {
-                            writer.addRowBatch(batch);
-                            recordCount += batch.size;
-                        }
-                        totalRecordCount.addAndGet(recordCount);
-                    } finally {
-                        reader.close();
-                        writer.close();
+                VectorizedRowBatch batch = settings.orcSchema.createRowBatch();
+                RecordReader reader = new JsonReader(in, settings.converter);
+                try {
+                    int recordCount = 0;
+                    while (reader.nextBatch(batch)) {
+                        writer.addRowBatch(batch);
+                        recordCount += batch.size;
                     }
+                    totalRecordCount.addAndGet(recordCount);
+                } finally {
+                    reader.close();
+                    writer.close();
                 }
             });
 
