@@ -57,6 +57,7 @@ public class ConsumerPool implements Closeable {
     private final AtomicLong consumerCreatedCountRef = new AtomicLong();
     private final AtomicLong consumerClosedCountRef = new AtomicLong();
     private final AtomicLong leasesObtainedCountRef = new AtomicLong();
+    private final long maxMessagesPerRun;
 
     /**
      * Creates a pool of KafkaConsumer objects that will grow up to the maximum
@@ -87,6 +88,7 @@ public class ConsumerPool implements Closeable {
             final String keyEncoding,
             final String securityProtocol,
             final String bootstrapServers,
+            final long maxMessagesPerRun,
             final ComponentLog logger) {
         this.pooledLeases = new ArrayBlockingQueue<>(maxConcurrentLeases);
         this.maxWaitMillis = maxWaitMillis;
@@ -95,6 +97,7 @@ public class ConsumerPool implements Closeable {
         this.keyEncoding = keyEncoding;
         this.securityProtocol = securityProtocol;
         this.bootstrapServers = bootstrapServers;
+        this.maxMessagesPerRun = maxMessagesPerRun;
         this.kafkaProperties = Collections.unmodifiableMap(kafkaProperties);
         this.topics = Collections.unmodifiableList(topics);
         this.topicPattern = null;
@@ -111,6 +114,7 @@ public class ConsumerPool implements Closeable {
             final String keyEncoding,
             final String securityProtocol,
             final String bootstrapServers,
+            final long maxMessagesPerRun,
             final ComponentLog logger) {
         this.pooledLeases = new ArrayBlockingQueue<>(maxConcurrentLeases);
         this.maxWaitMillis = maxWaitMillis;
@@ -119,6 +123,7 @@ public class ConsumerPool implements Closeable {
         this.keyEncoding = keyEncoding;
         this.securityProtocol = securityProtocol;
         this.bootstrapServers = bootstrapServers;
+        this.maxMessagesPerRun = maxMessagesPerRun;
         this.kafkaProperties = Collections.unmodifiableMap(kafkaProperties);
         this.topics = null;
         this.topicPattern = topics;
@@ -135,6 +140,7 @@ public class ConsumerPool implements Closeable {
             final long maxWaitMillis,
             final String securityProtocol,
             final String bootstrapServers,
+            final long maxMessagesPerRun,
             final ComponentLog logger) {
         this.pooledLeases = new ArrayBlockingQueue<>(maxConcurrentLeases);
         this.maxWaitMillis = maxWaitMillis;
@@ -145,6 +151,7 @@ public class ConsumerPool implements Closeable {
         this.writerFactory = writerFactory;
         this.securityProtocol = securityProtocol;
         this.bootstrapServers = bootstrapServers;
+        this.maxMessagesPerRun = maxMessagesPerRun;
         this.kafkaProperties = Collections.unmodifiableMap(kafkaProperties);
         this.topics = null;
         this.topicPattern = topics;
@@ -159,6 +166,7 @@ public class ConsumerPool implements Closeable {
             final long maxWaitMillis,
             final String securityProtocol,
             final String bootstrapServers,
+            final long maxMessagesPerRun,
             final ComponentLog logger) {
         this.pooledLeases = new ArrayBlockingQueue<>(maxConcurrentLeases);
         this.maxWaitMillis = maxWaitMillis;
@@ -169,6 +177,7 @@ public class ConsumerPool implements Closeable {
         this.writerFactory = writerFactory;
         this.securityProtocol = securityProtocol;
         this.bootstrapServers = bootstrapServers;
+        this.maxMessagesPerRun = maxMessagesPerRun;
         this.kafkaProperties = Collections.unmodifiableMap(kafkaProperties);
         this.topics = topics;
         this.topicPattern = null;
@@ -264,7 +273,7 @@ public class ConsumerPool implements Closeable {
         private volatile boolean closedConsumer;
 
         private SimpleConsumerLease(final Consumer<byte[], byte[]> consumer) {
-            super(maxWaitMillis, consumer, demarcatorBytes, keyEncoding, securityProtocol, bootstrapServers, readerFactory, writerFactory, logger);
+            super(maxWaitMillis, consumer, demarcatorBytes, keyEncoding, securityProtocol, bootstrapServers, maxMessagesPerRun, readerFactory, writerFactory, logger);
             this.consumer = consumer;
         }
 

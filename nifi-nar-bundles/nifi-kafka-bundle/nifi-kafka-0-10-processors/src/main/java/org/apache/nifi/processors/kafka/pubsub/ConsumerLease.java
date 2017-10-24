@@ -81,9 +81,12 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
     //to them on subsequent poll calls
     private final Map<BundleInformation, BundleTracker> bundleMap = new HashMap<>();
     private final Map<TopicPartition, OffsetAndMetadata> uncommittedOffsetsMap = new HashMap<>();
+
     private long leaseStartNanos = -1;
     private boolean lastPollEmpty = false;
     private int totalMessages = 0;
+
+    private final long maxMessagesPerRun;
 
     ConsumerLease(
             final long maxWaitMillis,
@@ -92,6 +95,7 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
             final String keyEncoding,
             final String securityProtocol,
             final String bootstrapServers,
+            final long maxMessagesPerRun,
             final RecordReaderFactory readerFactory,
             final RecordSetWriterFactory writerFactory,
             final ComponentLog logger) {
@@ -104,6 +108,7 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
         this.readerFactory = readerFactory;
         this.writerFactory = writerFactory;
         this.logger = logger;
+        this.maxMessagesPerRun = maxMessagesPerRun;
     }
 
     /**
@@ -257,7 +262,7 @@ public abstract class ConsumerLease implements Closeable, ConsumerRebalanceListe
         if (bundleMap.size() > 200) { //a magic number - the number of simultaneous bundles to track
             return false;
         } else {
-            return totalMessages < 1000;//admittedlly a magic number - good candidate for processor property
+            return totalMessages < maxMessagesPerRun;//admittedlly a magic number - good candidate for processor property
         }
     }
 

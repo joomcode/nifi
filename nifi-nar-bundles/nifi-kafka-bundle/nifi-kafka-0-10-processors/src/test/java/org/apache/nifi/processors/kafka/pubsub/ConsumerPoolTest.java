@@ -72,6 +72,7 @@ public class ConsumerPoolTest {
                 "utf-8",
                 "ssl",
                 "localhost",
+                10000,
                 logger) {
             @Override
             protected Consumer<byte[], byte[]> createKafkaConsumer() {
@@ -87,6 +88,7 @@ public class ConsumerPoolTest {
                 "utf-8",
                 "ssl",
                 "localhost",
+                10000,
                 logger) {
             @Override
             protected Consumer<byte[], byte[]> createKafkaConsumer() {

@@ -243,7 +243,7 @@ public class ConsumeKafkaRecord_0_10 extends AbstractProcessor {
     protected ConsumerPool createConsumerPool(final ProcessContext context, final ComponentLog log) {
         final int maxLeases = context.getMaxConcurrentTasks();
         final long maxUncommittedTime = context.getProperty(MAX_UNCOMMITTED_TIME).asTimePeriod(TimeUnit.MILLISECONDS);
-
+        final long maxMessagesPerRun = context.getProperty(MAX_POLL_RECORDS).asLong();
         final Map<String, Object> props = new HashMap<>();
         KafkaProcessorUtils.buildCommonKafkaProperties(context, ConsumerConfig.class, props);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
@@ -266,10 +266,10 @@ public class ConsumeKafkaRecord_0_10 extends AbstractProcessor {
               }
           }
 
-            return new ConsumerPool(maxLeases, readerFactory, writerFactory, props, topics, maxUncommittedTime, securityProtocol, bootstrapServers, log);
+            return new ConsumerPool(maxLeases, readerFactory, writerFactory, props, topics, maxUncommittedTime, securityProtocol, bootstrapServers, maxMessagesPerRun, log);
         } else if (topicType.equals(TOPIC_PATTERN.getValue())) {
           final Pattern topicPattern = Pattern.compile(topicListing.trim());
-            return new ConsumerPool(maxLeases, readerFactory, writerFactory, props, topicPattern, maxUncommittedTime, securityProtocol, bootstrapServers, log);
+            return new ConsumerPool(maxLeases, readerFactory, writerFactory, props, topicPattern, maxUncommittedTime, securityProtocol, bootstrapServers, maxMessagesPerRun, log);
         } else {
           getLogger().error("Subscription type has an unknown value {}", new Object[] {topicType});
           return null;
